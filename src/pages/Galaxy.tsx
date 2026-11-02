@@ -1,5 +1,7 @@
 import { useRef, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import ThreeObject from "@/components/ThreeObject";
+import StarfieldOverlay from "@/components/StarfieldOverlay";
 import * as THREE from "three";
 
 type PlanetItem = {
@@ -14,7 +16,7 @@ type PlanetItem = {
   children?: PlanetItem[];
 };
 
-  // 行星数据
+// 行星数据
 const planetData:PlanetItem[] = [
     {
         name: "sun",
@@ -122,17 +124,16 @@ const planetData:PlanetItem[] = [
     }
 ];
 
-const textureLoader = new THREE.TextureLoader();
-
-function addPlanets(obj: PlanetItem, parent: THREE.Object3D) {
-    const { name, radius, rotationSpeed, orbitalSpeed, texture, children, 
+// 递归添加行星及其卫星
+function addPlanets(obj: PlanetItem, parent: THREE.Object3D, textureLoader: THREE.TextureLoader) {
+    const { name, radius, rotationSpeed, orbitalSpeed, texture, children,
         distance, metalness, roughness } = obj;
-    const material = name === "sun" 
-        ? new THREE.MeshStandardMaterial({ 
+    const material = name === "sun"
+        ? new THREE.MeshStandardMaterial({
             color: 0x000000,
             emissive: 0xffddbb,
             emissiveIntensity: 2.2
-        }) 
+        })
         : new THREE.MeshStandardMaterial();
     material.metalness = metalness;
     material.roughness = roughness;
@@ -142,7 +143,7 @@ function addPlanets(obj: PlanetItem, parent: THREE.Object3D) {
             material.emissiveMap = map;
         } else {
             material.map = map;
-        }    
+        }
         material.needsUpdate = true;
     });
     const geo = new THREE.SphereGeometry(radius, 64, 64);
@@ -155,23 +156,123 @@ function addPlanets(obj: PlanetItem, parent: THREE.Object3D) {
     if (parent) parent.add(sphere);
     if (children) {
         children.forEach((subObj) => {
-            addPlanets(subObj, sphere);
+            addPlanets(subObj, sphere, textureLoader);
         });
     }
 }
 
-export default function Galaxy() {
-    const rafRef = useRef<number>(0);
+function easeInOutCubic(t: number): number {
+    return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+}
 
-    useEffect(() => {
-        const canvas = document.querySelector("canvas.galaxy");
+// 摄像机阶段
+type Phase = "idle" | "follow" | "zoom" | "done";
+
+// 各阶段时长（秒）
+const IDLE_DURATION = 15;        // 正常展示太阳系
+const FOLLOW_DURATION = 4;       // 相机跟随地球
+const ZOOM_DURATION = 3;         // 推进切入地球 + 星空跃迁过渡
+
+export default function Galaxy() {
+    const threeRef = useRef<ThreeObject | null>(null);
+
+    const overlayRef = useRef<HTMLDivElement>(null);
+    const warpSpeedRef = useRef(900);
+
+    const navigate = useNavigate();
+
+
+    function cameraFollow(three: ThreeObject, navigate: ReturnType<typeof useNavigate>) {
+        const camera = three.camera;
+        const earth = three.scene.getObjectByName("earth");
+
+        // 初始相机位置和注视点
+        const initialCamPos = new THREE.Vector3(0, 0, 100);
+        const initialLookAt = new THREE.Vector3(0, 0, 0);
+        camera.position.copy(initialCamPos);
+        camera.lookAt(initialLookAt);
+
+        if (!earth) return;
+
+        let phase: Phase = "idle";
+        let phaseTimer = 0;
+        let navigated = false;
+
+        const followOffset = new THREE.Vector3(0, 4, 10);
+        const zoomFinalDist = 1.9;
+
+        const tmpEarthPos = new THREE.Vector3();
+        const tmpTarget = new THREE.Vector3();
+        const tmpDir = new THREE.Vector3();
+
+        three.onTick((dt: number) => {
+            if (phase === "done") return;
+            phaseTimer += dt;
+
+            earth.getWorldPosition(tmpEarthPos);
+
+            switch (phase) {
+                case "idle":
+                    if (phaseTimer >= IDLE_DURATION) {
+                        phase = "follow";
+                        phaseTimer = 0;
+                        three.controls.enabled = false;
+                    }
+                    break;
+                case "follow":
+                    {
+                        tmpTarget.copy(tmpEarthPos).add(followOffset);
+                        camera.position.lerp(tmpTarget, 0.04);
+                        camera.lookAt(tmpEarthPos);
+                        if (phaseTimer >= FOLLOW_DURATION) {
+                            phase = "zoom";
+                            phaseTimer = 0;
+                        }
+                    }
+                    break;
+                case "zoom": 
+                    {
+                        const t = Math.min(phaseTimer/ ZOOM_DURATION, 1);
+                        // 偏移距离从 followOffset.length() 平滑过渡到 zoomFinalDist
+                        const startDist = followOffset.length();
+                        const dist = startDist + (zoomFinalDist - startDist) * easeInOutCubic(t);
+                        // 相机 -> 地球 的方向（归一化），沿该方向靠近地球
+                        tmpDir.subVectors(camera.position, tmpEarthPos);
+                        if (tmpDir.lengthSq() > 1e-6) tmpDir.normalize();
+                        else tmpDir.set(0, 0, 1);
+
+                        tmpTarget.copy(tmpEarthPos).add(tmpDir.multiplyScalar(dist));
+                        camera.position.lerp(tmpTarget, 0.12);
+                        camera.lookAt(tmpEarthPos);
+
+                        // 星空跃迁淡入 + 星点加速（推进约 1/3 处开始）
+                        if (overlayRef.current) {
+                            const fadeT = Math.max(0, (t - 0.35) / 0.65); // 0 -> 1
+                            overlayRef.current.style.opacity = String(easeInOutCubic(fadeT));
+                            warpSpeedRef.current = 40 + easeInOutCubic(t) * 1600;
+                        }
+
+                        // 推进结束 -> 跳转 Earth 页
+                        if (t >= 1 && !navigated) {
+                            navigated = true;
+                            navigate("/earth");
+                            return;
+                        }
+                    }
+                    break;
+            }
+        });  
+    }
+    
+    function initializeThree(canvas:HTMLCanvasElement): ThreeObject {
         const three = new ThreeObject(canvas);
         const group = new THREE.Group();
         three.add(group);
 
-        addPlanets(planetData[0], group);
+        const textureLoader = new THREE.TextureLoader();
+        addPlanets(planetData[0], group, textureLoader);
 
-        // 点光源
+        // 太阳光
         const pointLight = new THREE.PointLight(0xffffff, 12, 250, 1);
         pointLight.castShadow = true;
         pointLight.shadow.bias = -0.001;
@@ -191,28 +292,43 @@ export default function Galaxy() {
             three.scene.background = envMap;
         });
 
-        // 加旋转动画
-        const animate = () => {
+        three.onTick((dt: number) => {
+            // 行星公转与自转
             group.traverse((mesh: THREE.Object3D) => {
                 if (!mesh.isMesh) return;
                 const ud = mesh.userData;
-               if (!ud) return;
+                if (!ud) return;
                 const { distance, rotationSpeed, orbitalSpeed, orbitAngle = 0 } = ud;
-                mesh.rotation.y = mesh.rotation.y + rotationSpeed * Math.PI / 180;
-                let newAngle = orbitAngle + orbitalSpeed * Math.PI / 180;
+                mesh.rotation.y += rotationSpeed * Math.PI / 180 * dt * 60;
+                let newAngle = orbitAngle + orbitalSpeed * Math.PI / 180 * dt * 60;
                 newAngle %= Math.PI * 2;
                 mesh.userData.orbitAngle = newAngle;
                 mesh.position.x = distance * Math.cos(newAngle);
                 mesh.position.z = distance * Math.sin(newAngle);
             });
-            rafRef.current = requestAnimationFrame(animate);
-        }
-        animate();
-        return () => {
-            cancelAnimationFrame(rafRef.current);
-            three.destroy();
-        };
-    }, []);
-  
-    return <canvas className="galaxy"></canvas>
+        });
+        return three;    
+    }     
+
+    useEffect(() => {
+        const canvas = document.querySelector("canvas.galaxy");
+        const three = initializeThree(canvas as HTMLCanvasElement);
+        cameraFollow(three, navigate);
+        threeRef.current = three;
+        return () => three.destroy();
+    }, [navigate]);
+
+    return (
+        <>
+            <canvas className="galaxy"></canvas>
+            {/* 星空跃迁过渡层 */}
+            <StarfieldOverlay
+                ref={overlayRef}
+                speedRef={warpSpeedRef}
+                style={{ opacity: 0 }}
+            />
+        </>
+    );
 }
+
+

@@ -8,14 +8,14 @@ class ThreeObject {
     #ambient: THREE.AmbientLight;
     #axes: THREE.AxesHelper;
     #controls: OrbitControls;
-    #loop: ((dt: number) => void) | null;
     #rafId: number | null;
-    #resizeHandler: () => void;
+    #resizeHandler: (() => void) | null;
     #timer: THREE.Timer;
+    #loops = new Set<(dt: number) => void>();
     
     constructor(domElement: HTMLCanvasElement) {
-        this.#loop = null;
         this.#rafId = null;
+        this.#resizeHandler = null;
         this.initialize(domElement);
     }
     initialize(domElement: HTMLCanvasElement) {
@@ -46,8 +46,8 @@ class ThreeObject {
         const renderLoop = (timestamp: number = 0) => {
             this.#timer.update(timestamp);
             const dt = this.#timer.getDelta();  // 当前帧与上一帧之间的时间差（单位秒） 
-            if (typeof this.#loop === "function") {
-                this.#loop(dt);
+            for (const cb of this.#loops) {
+                cb(dt);
             }
             if (this.#controls.enabled) {
                 this.#controls.update();
@@ -97,14 +97,16 @@ class ThreeObject {
     get controls() {
         return this.#controls;
     }
-    loop(fn: (dt: number) => void) {
-        this.#loop = fn;
+    onTick(cb: (dt: number) => void) {
+        this.#loops.add(cb);
+        return () => this.#loops.delete(cb);
     }
     destroy() {
         if (this.#rafId) cancelAnimationFrame(this.#rafId);
-        window.removeEventListener("resize", this.#resizeHandler);
+        if (this.#resizeHandler) window.removeEventListener("resize", this.#resizeHandler);
         this.#controls.dispose();
         this.#renderer.dispose();
+        this.#loops.clear();
     }
 }
 
