@@ -4,6 +4,7 @@ import Galaxy from '@/pages/Galaxy'
 
 
 export const routes: RouteObject[] = [
+  { path: '/', element: <Galaxy /> },
   { path: '/galaxy', element: <Galaxy /> },
   { path: '/earth', element: <Earth /> },
 ]
