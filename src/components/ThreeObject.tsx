@@ -101,7 +101,7 @@ class ThreeObject {
         this.#loops.add(cb);
         return () => this.#loops.delete(cb);
     }
-    destroy() {
+    dispose() {
         if (this.#rafId) cancelAnimationFrame(this.#rafId);
         if (this.#resizeHandler) window.removeEventListener("resize", this.#resizeHandler);
         this.#controls.dispose();

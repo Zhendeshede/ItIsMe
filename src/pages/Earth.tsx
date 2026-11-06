@@ -27,7 +27,7 @@ const skySources = {
 
 const MIN_DISPLAY = 2500;
 const FLY_DELAY = 10000;
-const FADE_MAX_WAIT = 12000;
+const FADE_MAX_WAIT = 5000;
 
 const SCREEN_CFG = {
   offsetHeight: 1000,
@@ -51,16 +51,20 @@ function createImgProvider(tk: string) {
 }
 
 function flyToJinwu(viewer: Cesium.Viewer, onComplete?: () => void) {
-  viewer.camera.flyTo({
-    destination: Cesium.Cartesian3.fromDegrees(jinWu.lon, jinWu.lat, jinWu.height),
-    duration: 5,
-    orientation: {
-      heading: Cesium.Math.toRadians(0),
-      pitch: Cesium.Math.toRadians(-30),
-      roll: 0,
-    },
-    complete: onComplete,
-  });
+  const centerH = SCREEN_CFG.offsetHeight + SCREEN_CFG.height / 2;
+  const target = Cesium.Cartesian3.fromDegrees(jinWu.lon, jinWu.lat, centerH);
+  viewer.camera.flyToBoundingSphere(new Cesium.BoundingSphere(target, 1),
+    {
+      offset: new Cesium.HeadingPitchRange(
+        Cesium.Math.toRadians(0),  
+        Cesium.Math.toRadians(-25), 
+        jinWu.height
+      ),
+      duration: 5,
+      complete: onComplete,
+      cancel: () => console.warn("flyTo 被取消/中断"),
+    }
+  );
 }
 
 async function initViewer(containerId: string): Promise<Cesium.Viewer> {
@@ -101,12 +105,11 @@ const createResumeScreen = (v: Cesium.Viewer): Cesium.Entity => {
 
   const boxEnt = v.entities.add({
     position: centerCart,
-    box: {
-      dimensions: new Cesium.Cartesian3(SCREEN_CFG.width, SCREEN_CFG.height, SCREEN_CFG.depth),
-      material: new Cesium.ImageMaterialProperty({
-        image: SCREEN_CFG.avatarImg,
-        repeat: new Cesium.Cartesian2(1, 1),
-      }),
+    billboard: {
+      image: SCREEN_CFG.avatarImg,
+      width: SCREEN_CFG.width,
+      height: SCREEN_CFG.height,
+      disableDepthTestDistance: Number.POSITIVE_INFINITY,
     },
   });
   return boxEnt;
@@ -202,20 +205,8 @@ export default function Earth() {
       flyTimer = setTimeout(() => {
         flyToJinwu(viewer!, () => {
           screenEnt = createResumeScreen(viewer!);
-
-          viewer!.camera.flyTo({
-            destination: Cesium.Cartesian3.fromDegrees(jinWu.lon, jinWu.lat, 7000),
-            orientation: {
-              heading: 0,
-              pitch: Cesium.Math.toRadians(-80),
-              roll: 0,
-            },
-            duration: 1.8,
-          });
-
-          // 拾取点击
           clickHandler = new Cesium.ScreenSpaceEventHandler(viewer!.scene.canvas);
-          clickHandler.setInputAction((e: Cesium.ScreenSpaceEvent) => {
+          clickHandler.setInputAction((e: Cesium.ScreenSpaceEventHandler.PositionedEvent) => {
             const pick = viewer!.scene.pick(e.position);
             if (!Cesium.defined(pick)) return;
             if (pick.id === screenEnt) {
@@ -247,40 +238,26 @@ export default function Earth() {
       <div id="earth" className="w-full h-full"></div>
       <StarfieldOverlay ref={overlayRef} speedRef={warpSpeedRef} />
       {modalOpen && (
-          <div
-            style={{
-              position: "absolute",
-              top: "50%",
-              left: "50%",
-              transform: "translate(-50%,-50%)",
-              width: "620px",
-              maxHeight: "80vh",
-              background: "#fff",
-              padding: "20px",
-              borderRadius: "12px",
-              boxShadow: "0 4px 20px rgba(0,0,0,0.25)",
-              zIndex: 999,
-              overflow: "hidden", // 外层禁止滚动
-              display: "flex",
-              flexDirection: "column",
-            }}
-          >
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, flexShrink: 0 }}>
-              <span style={{ fontWeight: 600 }}>简历预览</span>
-              <button
-                onClick={() => setModalOpen(false)}
-                style={{ border: "none", background: "#eee", borderRadius: 6, padding: "4px 10px", cursor: "pointer" }}
-              >
-                关闭
-              </button>
-            </div>
-            {/* 只有这一层滚动 */}
-            <div style={{ flex: 1, overflow: "auto", textAlign: "center" }}>
+        <div 
+          className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-white p-5 rounded-xl shadow-lg z-[999] flex flex-col overflow-hidden"
+          style={{ maxHeight: "80vh" }}
+        >
+          <div className="flex justify-between items-center mb-3 flex-shrink-0">
+            <span className="font-semibold">简历</span>
+            <button
+              onClick={() => setModalOpen(false)}
+              className="border-none bg-gray-200 rounded-md px-2.5 py-1 cursor-pointer"
+            >
+              关闭
+            </button>
+          </div>
+          <div className="flex-1 overflow-auto">
+            <div className="w-fit mx-auto">
               {loadingPdf ? <p>加载PDF...</p> : <canvas ref={canvasRef} />}
             </div>
           </div>
-        )}
-
+        </div>
+      )}
     </>
   );
 }

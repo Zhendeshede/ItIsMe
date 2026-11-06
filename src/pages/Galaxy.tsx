@@ -3,6 +3,8 @@ import { useNavigate } from "react-router-dom";
 import ThreeObject from "@/components/ThreeObject";
 import StarfieldOverlay from "@/components/StarfieldOverlay";
 import * as THREE from "three";
+import { FontLoader } from "three/addons/loaders/FontLoader.js";
+import { TextGeometry } from "three/addons/geometries/TextGeometry.js";
 
 type PlanetItem = {
   name: string;
@@ -269,8 +271,39 @@ export default function Galaxy() {
         const group = new THREE.Group();
         three.add(group);
 
+
+        const fontLoader = new FontLoader();
+        const url = new URL("@/assets/sources/helvetiker_bold.typeface.json", import.meta.url).href;
+        let textMesh: THREE.Mesh | null = null;
+        fontLoader.load(url, (font: THREE.Font) => {
+            const textGeometry = new TextGeometry("ItIsMe", {
+                font: font,
+                size: 16,
+                depth: 5,
+                curveSegments: 12,
+                bevelEnabled: true,  
+                bevelThickness: 0.3,
+                bevelSize: 0.3,
+                bevelOffset: 0,
+                bevelSegments: 2,       
+            });
+            textGeometry.center();
+            const textMaterial = new THREE.MeshStandardMaterial({ 
+                color: 0xe8e8e8,
+                metalness: 0.9,
+                roughness: 0.25,
+            });
+            textMesh = new THREE.Mesh(textGeometry, textMaterial);
+            textMesh.name = "logo";
+            group.add(textMesh);
+        });   
+
+        const planetRoot = new THREE.Group();
+        planetRoot.name = "planet";
+        planetRoot.visible = false;
         const textureLoader = new THREE.TextureLoader();
-        addPlanets(planetData[0], group, textureLoader);
+        addPlanets(planetData[0], planetRoot, textureLoader);
+        group.add(planetRoot);
 
         // 太阳光
         const pointLight = new THREE.PointLight(0xffffff, 12, 250, 1);
@@ -293,8 +326,9 @@ export default function Galaxy() {
         });
 
         three.onTick((dt: number) => {
+            textMesh && textMesh.visible && textMesh.rotateY(dt * 0.1);
             // 行星公转与自转
-            group.traverse((mesh: THREE.Object3D) => {
+            planetRoot.visible && planetRoot.traverse((mesh: THREE.Object3D) => {
                 if (!mesh.isMesh) return;
                 const ud = mesh.userData;
                 if (!ud) return;
@@ -313,9 +347,18 @@ export default function Galaxy() {
     useEffect(() => {
         const canvas = document.querySelector("canvas.galaxy");
         const three = initializeThree(canvas as HTMLCanvasElement);
+        const timerId = setTimeout(() => {
+            const logoMesh = three.scene.getObjectByName("logo");
+            const planetGroup = three.scene.getObjectByName("planet");
+            if (logoMesh) logoMesh.visible = false;
+            if (planetGroup) planetGroup.visible = true;
+        }, 2000);
         cameraFollow(three, navigate);
         threeRef.current = three;
-        return () => three.destroy();
+        return () => { 
+            clearTimeout(timerId);
+            three.dispose();
+        };
     }, [navigate]);
 
     return (
